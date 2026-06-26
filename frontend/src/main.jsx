@@ -4,6 +4,9 @@ import { BrowserRouter } from 'react-router-dom'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import './index.css'
 import App from './App.jsx'
+import Prism from 'prismjs'
+
+window.Prism = Prism
 
 const GOOGLE_CLIENT_ID = "1026665161435-nmst3u0rma7a4clv2aglo24mlo303lpv.apps.googleusercontent.com"
 
