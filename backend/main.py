@@ -123,9 +123,17 @@ async def signup(user: UserSignup):
         return {"status": "success", "message": "User created successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail="Database error: " + str(e))
+def set_auth_cookies(response: Response, request: Request, access_token: str, refresh_token: str):
+    hostname = request.url.hostname or ""
+    is_local = "localhost" in hostname or "127.0.0.1" in hostname
+    secure = not is_local
+    samesite = "none" if not is_local else "lax"
+    
+    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=secure, samesite=samesite, max_age=15*60)
+    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=secure, samesite=samesite, max_age=7*24*60*60)
 
 @app.post("/api/auth/login")
-async def login(user: UserLogin, response: Response):
+async def login(user: UserLogin, response: Response, request: Request):
     """Authenticate a user and set JWT cookies."""
     # 1. Find user
     db_user = get_user_by_email(user.email)
@@ -143,9 +151,8 @@ async def login(user: UserLogin, response: Response):
     access_token = create_access_token(data={"sub": str(db_user["_id"])})
     refresh_token = create_refresh_token(data={"sub": str(db_user["_id"])})
     
-    # 4. Set cookies — secure=False for local HTTP dev
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=15*60)
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=7*24*60*60)
+    # 4. Set cookies — dynamic secure/samesite for production/dev
+    set_auth_cookies(response, request, access_token, refresh_token)
     
     return {"status": "success"}
 
@@ -171,20 +178,32 @@ async def refresh_token_endpoint(request: Request, response: Response):
         
         # issue new access token
         new_access = create_access_token(data={"sub": user_id})
-        response.set_cookie(key="access_token", value=new_access, httponly=True, secure=False, samesite="lax", max_age=15*60)
+        
+        # Dynamic cookie options
+        hostname = request.url.hostname or ""
+        is_local = "localhost" in hostname or "127.0.0.1" in hostname
+        secure = not is_local
+        samesite = "none" if not is_local else "lax"
+        
+        response.set_cookie(key="access_token", value=new_access, httponly=True, secure=secure, samesite=samesite, max_age=15*60)
         return {"status": "success"}
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
 @app.post("/api/auth/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
     """Log out by clearing HTTP-only cookies."""
-    response.delete_cookie("access_token")
-    response.delete_cookie("refresh_token")
+    hostname = request.url.hostname or ""
+    is_local = "localhost" in hostname or "127.0.0.1" in hostname
+    secure = not is_local
+    samesite = "none" if not is_local else "lax"
+    
+    response.delete_cookie("access_token", secure=secure, samesite=samesite)
+    response.delete_cookie("refresh_token", secure=secure, samesite=samesite)
     return {"status": "success"}
 
 @app.post("/api/auth/google")
-async def google_login(data: GoogleLogin, response: Response):
+async def google_login(data: GoogleLogin, response: Response, request: Request):
     """Authenticate a user using Google OAuth credential."""
     try:
         # Verify the token
@@ -220,9 +239,8 @@ async def google_login(data: GoogleLogin, response: Response):
         access_token = create_access_token(data={"sub": user_id_str})
         refresh_token = create_refresh_token(data={"sub": user_id_str})
         
-        # Set cookies — secure=False for local HTTP dev (localhost doesn't support secure cookies)
-        response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=15*60)
-        response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=7*24*60*60)
+        # Set cookies — dynamic secure/samesite for production/dev
+        set_auth_cookies(response, request, access_token, refresh_token)
         
         return {"status": "success"}
     except HTTPException:
