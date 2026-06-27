@@ -443,8 +443,8 @@ def extract_process_for_diagram(pdd_content: str, description: str) -> dict:
         "the document, but DO consolidate sub-bullets that describe a single logical step."
     )
 
-    # Cap input size for speed — process diagrams only need core process context
-    MAX_DOC_CHARS = 15000
+    # Cap input size to keep cost low — most PDDs are well under 80k chars
+    MAX_DOC_CHARS = 80000
     truncated = pdd_content[:MAX_DOC_CHARS] if pdd_content else ""
 
     user_prompt = (
