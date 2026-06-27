@@ -1693,8 +1693,9 @@ async def generate_document(assessment_id: str, payload: DocumentRequest, user_i
             template = PDD_TEMPLATE if doc_type == "pdd" else SDD_TEMPLATE
             prompt = template.format(context=context_str)
 
-        # Generate with Gemini 3.5 Flash
-        content = call_gemini_text(
+        # Generate with Gemini 3.5 Flash (offloaded to thread so event loop is not blocked)
+        content = await asyncio.to_thread(
+            call_gemini_text,
             prompt=prompt,
             system_prompt="You are a senior document specialist. Generate detailed, professional documents with proper markdown formatting. Be specific — use the actual data provided, not generic placeholders.",
             model="gemini-3.5-flash"
@@ -1727,8 +1728,8 @@ async def generate_document(assessment_id: str, payload: DocumentRequest, user_i
             elif "[[BPMN_DIAGRAM]]" in content:
                 content = content.replace("[[BPMN_DIAGRAM]]", bpmn_markdown)
 
-        # Step 2: Replace [[FLOWCHART: ...]] placeholders with Gemini-generated images
-        content = inject_flowcharts(content)
+        # Step 2: Replace [[FLOWCHART: ...]] placeholders with Gemini-generated images (offloaded to thread)
+        content = await asyncio.to_thread(inject_flowcharts, content)
 
         # Save to MongoDB
         update_assessment_document(assessment_id, user_id, doc_type, content)
@@ -1821,7 +1822,8 @@ Current document:
 {current_doc_for_gemini}
 """
 
-        updated_content = call_gemini_text(
+        updated_content = await asyncio.to_thread(
+            call_gemini_text,
             prompt=prompt,
             system_prompt="You are a senior document specialist. Apply the requested changes carefully. Return the complete updated document — never truncate or summarize unchanged sections.",
             model="gemini-3.5-flash"
@@ -1841,7 +1843,7 @@ Current document:
                 updated_content = updated_content.replace("[[BPMN_DIAGRAM]]", bpmn_block)
 
         # ── Generate SVG images for any NEW [[FLOWCHART: ...]] placeholders ────
-        updated_content = inject_flowcharts(updated_content)
+        updated_content = await asyncio.to_thread(inject_flowcharts, updated_content)
 
         # Replace the old document in MongoDB
         update_assessment_document(assessment_id, user_id, doc_type, updated_content)
