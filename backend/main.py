@@ -1516,7 +1516,22 @@ def inject_flowcharts(content: str) -> str:
             f"please add the diagram manually.)*\n"
         )
 
-    content = pattern.sub(replace_placeholder, content)
+    matches = list(pattern.finditer(content))
+    if matches:
+        import concurrent.futures
+        print(f"[inject_flowcharts] Processing {len(matches)} flowchart placeholders in parallel...")
+        results_map = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_match = {executor.submit(replace_placeholder, m): m for m in matches}
+            for future in concurrent.futures.as_completed(future_to_match):
+                m = future_to_match[future]
+                try:
+                    results_map[m.group(0)] = future.result()
+                except Exception as e:
+                    print(f"[inject_flowcharts] Parallel diagram generation failed for match: {e}")
+        
+        for placeholder, replacement in results_map.items():
+            content = content.replace(placeholder, replacement, 1)
 
     fence_re = re.compile(
         r'```(?:svg|xml|html)\s*\n(<svg\b[\s\S]*?</svg>)\s*\n```',
