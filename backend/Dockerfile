@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000
+    PORT=8080
 
 # Set working directory inside the container
 WORKDIR /app
@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose the port (Railway overrides this with $PORT)
-EXPOSE 8000
+EXPOSE 8080
 
 # Run FastAPI app
 CMD uvicorn main:app --host 0.0.0.0 --port $PORT --ws websockets
