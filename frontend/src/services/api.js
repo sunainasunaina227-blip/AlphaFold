@@ -23,11 +23,21 @@ async function fetchWithAuth(url, options = {}) {
 
     if (refreshResponse.ok) {
       // Refresh succeeded, the new access_token cookie is now set.
+      try {
+        const data = await refreshResponse.clone().json();
+        if (data.access_token) {
+          sessionStorage.setItem('access_token', data.access_token);
+        }
+      } catch (e) {
+        console.warn("Failed to parse refresh token from response", e);
+      }
+      
       // Retry the original request
       response = await fetch(url, finalOptions);
     } else {
       // Refresh failed (e.g. refresh token expired or missing)
       // The user must log in again.
+      sessionStorage.removeItem('access_token');
       throw new Error('Session expired. Please log in again.');
     }
   }
@@ -44,11 +54,16 @@ export async function checkAuth() {
   if (!response.ok) {
     throw new Error('Not authenticated');
   }
-  return response.json();
+  const data = await response.json();
+  if (data.access_token) {
+    sessionStorage.setItem('access_token', data.access_token);
+  }
+  return data;
 }
 
 export async function logout() {
   const response = await fetchWithAuth(`${API_BASE}/auth/logout`, { method: 'POST' });
+  sessionStorage.removeItem('access_token');
   return response.json();
 }
 
@@ -65,7 +80,11 @@ export async function googleLogin(credential) {
     throw new Error(error.detail || `HTTP ${response.status}`);
   }
   
-  return response.json();
+  const data = await response.json();
+  if (data.access_token) {
+    sessionStorage.setItem('access_token', data.access_token);
+  }
+  return data;
 }
 
 // ---------------------------------------------------------

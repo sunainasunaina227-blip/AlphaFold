@@ -33,6 +33,10 @@ export default function Login() {
         throw new Error(data.detail || 'Login failed');
       }
 
+      if (data.access_token) {
+        sessionStorage.setItem('access_token', data.access_token);
+      }
+
       // Redirect to the dashboard
       navigate('/');
     } catch (err) {

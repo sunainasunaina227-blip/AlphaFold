@@ -465,6 +465,7 @@ export default function LiveChat({
           return;
         }
 
+        const token = sessionStorage.getItem('access_token') || "";
         const langParam = encodeURIComponent(language);
         let wsUrl = "";
 
@@ -483,6 +484,10 @@ export default function LiveChat({
         // The backend fetches it directly using the authenticated user_id cookie.
         if (isResume) {
           wsUrl += `&resume=true`;
+        }
+
+        if (token) {
+          wsUrl += `&token=${encodeURIComponent(token)}`;
         }
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;

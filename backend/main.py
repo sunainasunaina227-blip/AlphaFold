@@ -154,15 +154,16 @@ async def login(user: UserLogin, response: Response, request: Request):
     # 4. Set cookies — dynamic secure/samesite for production/dev
     set_auth_cookies(response, request, access_token, refresh_token)
     
-    return {"status": "success"}
+    return {"status": "success", "access_token": access_token}
 
 @app.get("/api/auth/check")
-async def check_auth(user_id: str = Depends(get_current_user)):
+async def check_auth(request: Request, user_id: str = Depends(get_current_user)):
     """Check if the current session is valid."""
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
-    return {"status": "success", "user": {"id": user_id, "name": user["name"], "email": user["email"]}}
+    token = request.cookies.get("access_token")
+    return {"status": "success", "user": {"id": user_id, "name": user["name"], "email": user["email"]}, "access_token": token}
 
 @app.post("/api/auth/refresh")
 async def refresh_token_endpoint(request: Request, response: Response):
@@ -186,7 +187,7 @@ async def refresh_token_endpoint(request: Request, response: Response):
         samesite = "none" if not is_local else "lax"
         
         response.set_cookie(key="access_token", value=new_access, httponly=True, secure=secure, samesite=samesite, max_age=15*60)
-        return {"status": "success"}
+        return {"status": "success", "access_token": new_access}
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
@@ -242,7 +243,7 @@ async def google_login(data: GoogleLogin, response: Response, request: Request):
         # Set cookies — dynamic secure/samesite for production/dev
         set_auth_cookies(response, request, access_token, refresh_token)
         
-        return {"status": "success"}
+        return {"status": "success", "access_token": access_token}
     except HTTPException:
         raise
     except ValueError as e:
@@ -3586,7 +3587,10 @@ INFORMATION YOU STILL MUST COLLECT
 @app.websocket("/api/ws/live-chat")
 async def live_chat_websocket(websocket: WebSocket):
     # Authenticate via cookie (browser automatically sends HttpOnly cookies over WS)
+    # or via token query parameter (for cross-site deployments where third-party cookies are blocked)
     token = websocket.cookies.get("access_token")
+    if not token:
+        token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=1008)
         return
