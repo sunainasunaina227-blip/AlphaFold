@@ -1,4 +1,5 @@
-const API_BASE = '/api';
+const backendUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/+$/, "") : "";
+export const API_BASE = backendUrl ? `${backendUrl}/api` : '/api';
 
 /**
  * A wrapper around fetch that automatically includes credentials (cookies)
