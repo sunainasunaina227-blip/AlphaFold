@@ -465,9 +465,18 @@ export default function LiveChat({
           return;
         }
 
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const langParam = encodeURIComponent(language);
-        let wsUrl = `${protocol}//${window.location.host}/api/ws/live-chat?lang=${langParam}`;
+        let wsUrl = "";
+
+        const backendApiUrl = import.meta.env.VITE_API_URL;
+        if (backendApiUrl) {
+          const cleanUrl = backendApiUrl.replace(/^(http|https):\/\//, "");
+          const wsProtocol = backendApiUrl.startsWith("https") ? "wss:" : "ws:";
+          wsUrl = `${wsProtocol}//${cleanUrl}/api/ws/live-chat?lang=${langParam}`;
+        } else {
+          const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+          wsUrl = `${protocol}//${window.location.host}/api/ws/live-chat?lang=${langParam}`;
+        }
 
         // If resuming, tell the backend to load history from MongoDB.
         // We do NOT encode history in the URL (length limits, truncation risk).
