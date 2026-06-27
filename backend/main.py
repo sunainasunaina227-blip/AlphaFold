@@ -3586,25 +3586,53 @@ INFORMATION YOU STILL MUST COLLECT
 
 @app.websocket("/api/ws/live-chat")
 async def live_chat_websocket(websocket: WebSocket):
-    # Authenticate via cookie (browser automatically sends HttpOnly cookies over WS)
-    # or via token query parameter (for cross-site deployments where third-party cookies are blocked)
+    # ------------------------------------------------------------------
+    # IMPORTANT: Accept the WebSocket connection FIRST, then authenticate.
+    # In cross-origin deployments (Netlify frontend → Railway backend),
+    # calling websocket.close() before accept() causes a silent TCP drop
+    # which the browser reports as error code 1006 (Abnormal Closure).
+    # ------------------------------------------------------------------
+    await websocket.accept()
+    print(f"INFO: [ws] WebSocket accepted from origin={websocket.headers.get('origin', 'N/A')}")
+
+    # --- Authenticate ---
+    # Try cookie first (works when same-origin or when cookies flow through proxy)
     token = websocket.cookies.get("access_token")
+    token_source = "cookie"
     if not token:
+        # Fallback: token passed as query parameter (cross-site deployments)
         token = websocket.query_params.get("token")
+        token_source = "query_param"
     if not token:
-        await websocket.close(code=1008)
+        print("WARN: [ws] No auth token found in cookies or query params — closing")
+        try:
+            await websocket.send_json({"error": "Authentication required. Please log in again."})
+            await websocket.close(code=1008)
+        except Exception:
+            pass
         return
+
     try:
         payload = verify_token(token)
         user_id = payload.get("sub")
         if not user_id:
-            await websocket.close(code=1008)
+            print(f"WARN: [ws] Token ({token_source}) verified but has no 'sub' claim — closing")
+            try:
+                await websocket.send_json({"error": "Invalid token. Please log in again."})
+                await websocket.close(code=1008)
+            except Exception:
+                pass
             return
-    except Exception:
-        await websocket.close(code=1008)
+    except Exception as e:
+        print(f"WARN: [ws] Token ({token_source}) verification failed: {e} — closing")
+        try:
+            await websocket.send_json({"error": "Session expired. Please log in again."})
+            await websocket.close(code=1008)
+        except Exception:
+            pass
         return
 
-    await websocket.accept()
+    print(f"INFO: [ws] Authenticated user {user_id} via {token_source}")
 
     is_resume = websocket.query_params.get("resume", "") == "true"
     saved_messages = []
