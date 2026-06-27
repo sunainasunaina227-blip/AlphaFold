@@ -109,7 +109,7 @@ export default function FlowchartView({ scoredSteps, initialXml, assessmentId, o
     setError(null);
 
     try {
-      const res = await fetch('http://localhost:8000/api/flowchart/generate', {
+      const res = await fetch('/api/flowchart/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scored_steps: scoredSteps })
@@ -142,7 +142,7 @@ export default function FlowchartView({ scoredSteps, initialXml, assessmentId, o
       // Grab current state of the diagram
       const { xml: currentXml } = await modelerRef.current.saveXML({ format: true });
       
-      const res = await fetch('http://localhost:8000/api/flowchart/modify', {
+      const res = await fetch('/api/flowchart/modify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ xml: currentXml, prompt: promptText })
