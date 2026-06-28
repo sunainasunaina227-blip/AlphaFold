@@ -110,7 +110,7 @@ export default function InputPanel({ onAnalyzeText, onAnalyzeFile, onStartIntera
           </div>
         </button>
       ) : (
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           <button
             onClick={() => onStartLiveChat(true)}
             disabled={isLoading}
@@ -152,10 +152,10 @@ export default function InputPanel({ onAnalyzeText, onAnalyzeFile, onStartIntera
       </div>
 
       {/* Mode Toggle */}
-      <div className="inline-flex rounded-xl bg-slate-800/60 p-1 gap-1 mb-6 border border-white/5">
+      <div className="flex flex-wrap sm:inline-flex rounded-xl bg-slate-800/60 p-1 gap-1 mb-6 border border-white/5 w-full sm:w-auto">
         <button
           onClick={() => setMode('text')}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+          className={`flex-1 justify-center sm:flex-none flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
             mode === 'text'
               ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/30'
               : 'text-slate-400 hover:text-white hover:bg-white/5'
@@ -165,7 +165,7 @@ export default function InputPanel({ onAnalyzeText, onAnalyzeFile, onStartIntera
         </button>
         <button
           onClick={() => setMode('file')}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+          className={`flex-1 justify-center sm:flex-none flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
             mode === 'file'
               ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/30'
               : 'text-slate-400 hover:text-white hover:bg-white/5'
@@ -175,7 +175,7 @@ export default function InputPanel({ onAnalyzeText, onAnalyzeFile, onStartIntera
         </button>
         <button
           onClick={() => setMode('voice')}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+          className={`flex-1 justify-center sm:flex-none flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
             mode === 'voice'
               ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-lg shadow-rose-500/30'
               : 'text-slate-400 hover:text-white hover:bg-white/5'

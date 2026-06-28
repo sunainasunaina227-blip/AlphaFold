@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from utils.auth import get_current_user
 from utils.api_keys import generate_api_key, hash_api_key, mask_api_key
-from db.mongo_client import create_api_key, list_api_keys, revoke_api_key
+from db.mongo_client import create_api_key, list_api_keys, revoke_api_key, get_api_usage_stats
 
 router = APIRouter(prefix="/api/keys", tags=["api-keys"])
 
@@ -34,7 +34,12 @@ class ApiKeyCreateRequest(BaseModel):
 @router.get("")
 async def list_keys(user_id: str = Depends(get_current_user)):
     """List the current user's API keys (masked; never returns raw secrets)."""
-    return {"keys": list_api_keys(user_id), "available_models": AVAILABLE_MODELS}
+    return {
+        "keys": list_api_keys(user_id),
+        "available_models": AVAILABLE_MODELS,
+        "usage": get_api_usage_stats(user_id),
+    }
+
 
 
 @router.post("")
@@ -52,7 +57,7 @@ async def create_key(payload: ApiKeyCreateRequest, user_id: str = Depends(get_cu
     key_hash = hash_api_key(raw_key)
     display = mask_api_key(raw_key)
 
-    key_id = create_api_key(user_id, name, key_hash, display, models)
+    key_id = create_api_key(user_id, name, key_hash, display, models, secret=raw_key)
     if not key_id:
         raise HTTPException(status_code=500, detail="Failed to create API key (database unavailable).")
 

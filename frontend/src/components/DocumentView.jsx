@@ -638,6 +638,30 @@ export default function DocumentView({ result, onUpdateResult, pendingDocEdits =
     setError(null);
   }, [docType, result]);
 
+  // Poll backend for flowchart completion if document is currently rendering background diagrams
+  useEffect(() => {
+    if (!content || !content.includes('doc-flowchart-loading') || !result?.id) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const data = await generateDocument(result.id, docType, false);
+        if (data?.content && data.content !== content) {
+          setContent(data.content);
+          if (onUpdateResult) {
+            onUpdateResult(prev => ({
+              ...prev,
+              documents: { ...(prev.documents || {}), [docType]: data.content }
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn('Failed polling for flowchart updates', err);
+      }
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, [content, docType, result?.id, onUpdateResult]);
+
   // Close download menu on outside click
   useEffect(() => {
     const handleClick = (e) => {
@@ -1581,6 +1605,32 @@ export default function DocumentView({ result, onUpdateResult, pendingDocEdits =
           height: auto;
           display: block;
           margin: 0 auto;
+        }
+        .doc-flowchart-loading {
+          background: linear-gradient(135deg, #f8f9fb 0%, #f0eff9 100%);
+          border: 1px dashed #6c63ff;
+          min-height: 140px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .doc-flowchart-skeleton {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.75rem;
+          color: #5b53e4;
+          font-weight: 600;
+          font-size: 0.95rem;
+        }
+        .doc-flowchart-spinner {
+          display: inline-block;
+          animation: spin-pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes spin-pulse {
+          0% { transform: scale(0.9) rotate(0deg); opacity: 0.7; }
+          50% { transform: scale(1.15) rotate(180deg); opacity: 1; }
+          100% { transform: scale(0.9) rotate(360deg); opacity: 0.7; }
         }
 
         /* ── Code blocks ─────────────────────────────────────── */

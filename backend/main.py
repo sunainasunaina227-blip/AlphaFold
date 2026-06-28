@@ -15,7 +15,7 @@ import uuid
 import shutil
 import json
 import base64
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Depends, Response, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body, Depends, Response, Request, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 import asyncio
@@ -42,7 +42,8 @@ from db.mongo_client import (
     update_assessment_data,
     save_live_chat_session,
     get_live_chat_session,
-    delete_live_chat_session
+    delete_live_chat_session,
+    check_and_record_api_usage
 )
 from db.user_client import create_user, get_user_by_email, update_password, get_user_by_id
 from utils.auth import get_password_hash, verify_password, create_access_token, get_current_user, create_refresh_token, verify_token, get_api_account
@@ -1446,16 +1447,20 @@ Here is the assessment data to base this SDD on:
 
 def inject_flowcharts(content: str) -> str:
     """Replace [[FLOWCHART: ...]] placeholders with AI-generated SVG diagrams
-    using a 3-stage LangChain-style pipeline.
+    using a 3-stage LangChain-style pipeline — all flowcharts generated in PARALLEL.
 
-    PIPELINE
+    PIPELINE (per flowchart)
     --------
     Stage 1 - Process Extractor:  reads the FULL document and extracts a
               structured process model (steps, decisions, exceptions, actors,
               edges) from the section the placeholder refers to.
     Stage 2 - Layout Planner:     converts that structured model into a
-              precise SVG layout (viewBox, node positions, sizing).
+              precise SVG layout (viewBox + node positions + sizing).
     Stage 3 - SVG Writer:         turns the layout into polished SVG XML.
+
+    PERFORMANCE: All flowcharts are generated concurrently using a ThreadPoolExecutor
+    (max 4 workers). This cuts N sequential API call chains down to wall-clock time
+    of ~1 chain, saving ~20-30s per additional flowchart.
 
     This produces diagrams that capture EVERY exception, gateway and
     validation mentioned anywhere in the PDD/SDD - not just the happy path.
@@ -1471,6 +1476,7 @@ def inject_flowcharts(content: str) -> str:
     [[FLOWCHART:]] placeholder.
     """
     import re
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from utils.gemini_client import generate_flowchart_svg, extract_process_for_diagram
 
     def _clean_and_wrap_svg(svg_text: str) -> str:
@@ -1487,44 +1493,76 @@ def inject_flowcharts(content: str) -> str:
             f'</figure>\n\n'
         )
 
-    pattern = re.compile(r'\[\[FLOWCHART:\s*(.+?)\]\]', re.DOTALL)
-    extraction_cache: dict = {}
-
-    def replace_placeholder(match: re.Match) -> str:
-        description = match.group(1).strip()
-        print(f"[inject_flowcharts] Building diagram via 3-stage pipeline for: {description[:80]}...")
-        cache_key = description.lower()[:120]
-        if cache_key in extraction_cache:
-            structure = extraction_cache[cache_key]
-        else:
-            try:
-                structure = extract_process_for_diagram(content, description)
-            except Exception as e:
-                print(f"[inject_flowcharts] Stage 1 (extractor) errored: {e}")
-                structure = None
-            extraction_cache[cache_key] = structure
-        try:
-            svg_content = generate_flowchart_svg(description, process_structure=structure)
-        except Exception as e:
-            print(f"[inject_flowcharts] generate_flowchart_svg errored: {e}")
-            svg_content = None
-        if svg_content:
-            return _clean_and_wrap_svg(svg_content)
+    def _fallback_text(description: str) -> str:
         return (
             f"\n> **Diagram:** *{description}*  \n"
             f"> *(AI-generated flowchart image could not be rendered - "
             f"please add the diagram manually.)*\n"
         )
 
-    content = pattern.sub(replace_placeholder, content)
+    pattern = re.compile(r'\[\[FLOWCHART:\s*(.+?)\]\]', re.DOTALL)
 
+    # ── Step 1: Find all flowchart placeholders ──────────────────────────
+    matches = list(pattern.finditer(content))
+
+    if matches:
+        # Deduplicate descriptions (in case the same placeholder appears twice)
+        unique_descriptions = list(dict.fromkeys(
+            m.group(1).strip() for m in matches
+        ))
+        n = len(unique_descriptions)
+        print(f"[inject_flowcharts] Found {len(matches)} placeholder(s) ({n} unique) — generating ALL in parallel...")
+
+        # ── Step 2: Generate all flowcharts concurrently ─────────────────
+        def _generate_single(description: str) -> str:
+            """Run the full 3-stage pipeline for one flowchart."""
+            print(f"[inject_flowcharts] [PARALLEL] Building diagram for: {description[:80]}...")
+            try:
+                structure = extract_process_for_diagram(content, description)
+            except Exception as e:
+                print(f"[inject_flowcharts] Stage 1 (extractor) errored for '{description[:50]}': {e}")
+                structure = None
+            try:
+                svg_content = generate_flowchart_svg(description, process_structure=structure)
+            except Exception as e:
+                print(f"[inject_flowcharts] generate_flowchart_svg errored for '{description[:50]}': {e}")
+                svg_content = None
+            if svg_content:
+                return _clean_and_wrap_svg(svg_content)
+            return _fallback_text(description)
+
+        results: dict[str, str] = {}
+        max_workers = min(n, 4)  # Cap at 4 to respect API rate limits
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_desc = {
+                executor.submit(_generate_single, desc): desc
+                for desc in unique_descriptions
+            }
+            for future in as_completed(future_to_desc):
+                desc = future_to_desc[future]
+                try:
+                    results[desc] = future.result()
+                except Exception as e:
+                    print(f"[inject_flowcharts] Parallel generation failed for '{desc[:60]}': {e}")
+                    results[desc] = _fallback_text(desc)
+
+        # ── Step 3: Replace placeholders with generated results ──────────
+        def _replace_with_result(match: re.Match) -> str:
+            description = match.group(1).strip()
+            return results.get(description, _fallback_text(description))
+
+        content = pattern.sub(_replace_with_result, content)
+        print(f"[inject_flowcharts] All {n} flowchart(s) generated and injected (parallel).")
+
+    # ── Post-processing: clean up fenced SVG blocks and raw SVGs ─────────
     fence_re = re.compile(
         r'```(?:svg|xml|html)\s*\n(<svg\b[\s\S]*?</svg>)\s*\n```',
         re.IGNORECASE,
     )
     content = fence_re.sub(lambda m: _clean_and_wrap_svg(m.group(1)), content)
 
-    # Step 3: Defensive - re-wrap RAW <svg>...</svg> blocks that aren't
+    # Defensive - re-wrap RAW <svg>...</svg> blocks that aren't
     # already inside a <figure>. Python's re module rejects variable-width
     # look-behinds, so we use finditer + a small prefix check instead.
     raw_svg_re = re.compile(r'<svg\b[\s\S]*?</svg>', re.IGNORECASE)
@@ -1548,6 +1586,7 @@ def inject_flowcharts(content: str) -> str:
     content = ''.join(parts)
 
     return content
+
 
 class DocumentRequest(BaseModel):
     doc_type: str = "pdd"  # "pdd" or "sdd"
@@ -1623,8 +1662,19 @@ async def remove_template(assessment_id: str, doc_type: str = "pdd", user_id: st
     return {"status": "ok", "deleted": deleted, "doc_type": doc_type.lower()}
 
 
+def _bg_generate_flowcharts_task(assessment_id: str, user_id: str, doc_type: str, raw_content: str):
+    """Background worker task to generate all SVG flowcharts and update MongoDB."""
+    print(f"[generate_document] [BACKGROUND] Starting flowchart generation for {doc_type}...")
+    try:
+        final_content = inject_flowcharts(raw_content)
+        update_assessment_document(assessment_id, user_id, doc_type, final_content)
+        print(f"[generate_document] [BACKGROUND] Completed flowchart generation for {doc_type}.")
+    except Exception as e:
+        print(f"[generate_document] [BACKGROUND] Flowchart generation failed: {e}")
+
+
 @app.post("/api/history/{assessment_id}/generate-document")
-async def generate_document(assessment_id: str, payload: DocumentRequest, user_id: str = Depends(get_current_user)):
+async def generate_document(assessment_id: str, payload: DocumentRequest, background_tasks: BackgroundTasks, user_id: str = Depends(get_current_user)):
     """Generate a PDD or SDD document for an assessment."""
     try:
         doc_type = payload.doc_type.lower()
@@ -1640,26 +1690,17 @@ async def generate_document(assessment_id: str, payload: DocumentRequest, user_i
             documents = assessment.get("documents", {})
             existing = documents.get(doc_type)
             if existing:
-                return {"doc_type": doc_type, "content": existing, "cached": True}
+                is_loading = "doc-flowchart-loading" in existing
+                return {"doc_type": doc_type, "content": existing, "cached": True, "is_rendering_diagrams": is_loading}
 
         # Build context from assessment data
-        # Exclude fields that are either:
-        #   (a) Too large to safely fit in a prompt (original_transcript, markdown_report, bpmn_xml, chat_history, audio_scripts)
-        #   (b) Internal metadata not useful for doc generation (_id, user_id)
-        #   (c) Already applied post-generation (documents)
         HEAVY_FIELDS = {
             'bpmn_xml', 'chat_history', '_id', 'user_id', 'audio_scripts', 'documents',
-            # These two are the main token bombs — original_transcript can be 500k+ chars
-            # from a long audio/video file, and markdown_report is the full analysis report.
-            # The PDD/SDD templates only need the structured fields below.
             'original_transcript', 'markdown_report',
         }
         context_data = {k: v for k, v in assessment.items() if k not in HEAVY_FIELDS}
         context_str = json.dumps(context_data, indent=2)
 
-        # Safety guard: if remaining context is still very large (e.g. many scored_steps),
-        # truncate to ~200,000 chars (~50,000 tokens) which is well within the 1M limit
-        # when combined with the template (~6,000 tokens).
         MAX_CONTEXT_CHARS = 200_000
         if len(context_str) > MAX_CONTEXT_CHARS:
             print(f"[generate_document] context_str too large ({len(context_str)} chars) — truncating to {MAX_CONTEXT_CHARS}")
@@ -1667,10 +1708,6 @@ async def generate_document(assessment_id: str, payload: DocumentRequest, user_i
 
         # Choose the right template / prompt
         if has_template(assessment_id, doc_type):
-            # User uploaded their own template -> generate content that follows
-            # its exact section structure. The visual design (logo, header/
-            # footer, fonts) is applied at download time by rendering this
-            # content into a copy of the uploaded .docx.
             outline = build_template_outline(get_template_path(assessment_id, doc_type))
             prompt = (
                 "You are a senior RPA documentation specialist. Generate a COMPLETE "
@@ -1693,34 +1730,42 @@ async def generate_document(assessment_id: str, payload: DocumentRequest, user_i
             template = PDD_TEMPLATE if doc_type == "pdd" else SDD_TEMPLATE
             prompt = template.format(context=context_str)
 
-        # Generate with Gemini 3.5 Flash (offloaded to thread so event loop is not blocked)
-        content = await asyncio.to_thread(
+        # ── Parallel generation: doc content + BPMN (if missing) ────────────
+        bpmn_xml = assessment.get("bpmn_xml", "")
+        needs_bpmn = not bpmn_xml and bool(assessment.get("scored_steps", []))
+
+        doc_coro = asyncio.to_thread(
             call_gemini_text,
             prompt=prompt,
             system_prompt="You are a senior document specialist. Generate detailed, professional documents with proper markdown formatting. Be specific — use the actual data provided, not generic placeholders.",
             model="gemini-3.5-flash"
         )
 
-        # ── Auto-generate BPMN if missing ────────────────────────────────
-        bpmn_xml = assessment.get("bpmn_xml", "")
-        if not bpmn_xml:
+        if needs_bpmn:
             scored_steps = assessment.get("scored_steps", [])
-            if scored_steps:
-                print(f"[generate_document] No BPMN diagram found — auto-generating from {len(scored_steps)} scored steps...")
-                try:
-                    bpmn_xml = _generate_bpmn_xml(scored_steps)
-                    if bpmn_xml:
-                        update_assessment_bpmn(assessment_id, user_id, bpmn_xml)
-                        assessment["bpmn_xml"] = bpmn_xml
-                        print(f"[generate_document] BPMN auto-generated and saved ({len(bpmn_xml)} chars)")
-                except Exception as e:
-                    print(f"[generate_document] BPMN auto-generation failed (non-fatal): {e}")
+            print(f"[generate_document] No BPMN diagram found — auto-generating in parallel from {len(scored_steps)} scored steps...")
+            bpmn_coro = asyncio.to_thread(_generate_bpmn_xml, scored_steps)
+            results = await asyncio.gather(doc_coro, bpmn_coro, return_exceptions=True)
+
+            content = results[0]
+            if isinstance(content, Exception):
+                raise content
+
+            generated_bpmn = results[1]
+            if isinstance(generated_bpmn, Exception):
+                print(f"[generate_document] BPMN auto-generation failed (non-fatal): {generated_bpmn}")
+            elif generated_bpmn:
+                bpmn_xml = generated_bpmn
+                update_assessment_bpmn(assessment_id, user_id, bpmn_xml)
+                assessment["bpmn_xml"] = bpmn_xml
+                print(f"[generate_document] BPMN auto-generated and saved ({len(bpmn_xml)} chars)")
+        else:
+            content = await doc_coro
 
         # Step 1: Inject pre-generated BPMN XML into the placeholder
-        bpmn_xml = assessment.get("bpmn_xml", "")
+        bpmn_xml = assessment.get("bpmn_xml", "") or bpmn_xml
         if bpmn_xml:
             bpmn_markdown = f"```bpmn\n{bpmn_xml}\n```"
-            # Python's .format() escapes {{ }} into { }, so the model often outputs {BPMN_DIAGRAM}
             if "{{BPMN_DIAGRAM}}" in content:
                 content = content.replace("{{BPMN_DIAGRAM}}", bpmn_markdown)
             elif "{BPMN_DIAGRAM}" in content:
@@ -1728,13 +1773,26 @@ async def generate_document(assessment_id: str, payload: DocumentRequest, user_i
             elif "[[BPMN_DIAGRAM]]" in content:
                 content = content.replace("[[BPMN_DIAGRAM]]", bpmn_markdown)
 
-        # Step 2: Replace [[FLOWCHART: ...]] placeholders with Gemini-generated images (offloaded to thread)
-        content = await asyncio.to_thread(inject_flowcharts, content)
+        # Step 2: Offload [[FLOWCHART: ...]] generation to background task
+        # so the document opens instantly in ~35s with skeleton loaders!
+        import re
+        if "[[FLOWCHART:" in content:
+            def _replace_with_skeleton(m: re.Match) -> str:
+                desc = m.group(1).strip()
+                return (
+                    f'\n\n<figure class="doc-flowchart doc-flowchart-loading" data-description="{desc}" style="margin:2rem 0;text-align:center;">'
+                    f'<div class="doc-flowchart-skeleton"><span class="doc-flowchart-spinner">⚡</span> '
+                    f'<span>Aria is rendering diagram: <em>{desc}</em>...</span></div>'
+                    f'</figure>\n\n'
+                )
 
-        # Save to MongoDB
-        update_assessment_document(assessment_id, user_id, doc_type, content)
-
-        return {"doc_type": doc_type, "content": content, "cached": False}
+            draft_content = re.sub(r'\[\[FLOWCHART:\s*(.+?)\]\]', _replace_with_skeleton, content, flags=re.DOTALL)
+            update_assessment_document(assessment_id, user_id, doc_type, draft_content)
+            background_tasks.add_task(_bg_generate_flowcharts_task, assessment_id, user_id, doc_type, content)
+            return {"doc_type": doc_type, "content": draft_content, "cached": False, "is_rendering_diagrams": True}
+        else:
+            update_assessment_document(assessment_id, user_id, doc_type, content)
+            return {"doc_type": doc_type, "content": content, "cached": False}
     except HTTPException:
         raise
     except Exception as e:
@@ -3936,6 +3994,13 @@ async def v1_run(payload: V1RunRequest, account: dict = Depends(get_api_account)
         raise HTTPException(status_code=403, detail=f"This API key may not use '{model}'. Allowed: {allowed}")
 
     user_id = account["user_id"]
+
+    rate_allowed, used_today, rate_limit = check_and_record_api_usage(user_id, limit=7)
+    if not rate_allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily API request limit reached ({rate_limit} requests/day). Each user can only send up to 7 requests per day."
+        )
 
     try:
         if model == "ap_analysis":

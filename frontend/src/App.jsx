@@ -325,7 +325,7 @@ function Dashboard({ user }) {
                 <br />
                 <span className="text-xs text-slate-500">This typically takes 30–60 seconds</span>
               </p>
-              <div className="flex gap-4">
+              <div className="flex flex-wrap justify-center gap-2 sm:gap-4 px-4">
                 {['Extract', 'Structure', 'Score', 'Map', 'Summarize'].map((step, i) => (
                   <div key={step} className="flex flex-col items-center gap-2">
                     <div
@@ -425,7 +425,7 @@ function Dashboard({ user }) {
                         setActiveTab(tab.id);
                         if (tab.id === 'flow') setIsAgentOpen(false);
                       }}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 whitespace-nowrap ${
                         activeTab === tab.id
                           ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/25'
                           : 'text-slate-400 hover:text-white hover:bg-white/5'

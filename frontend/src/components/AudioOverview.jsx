@@ -83,7 +83,7 @@ export default function AudioOverview({ assessmentId, audioScripts }) {
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
         {/* Language Selector */}
         {!audioUrl && !isLoading && (
           <div className="flex items-center gap-2 bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2">
@@ -105,7 +105,7 @@ export default function AudioOverview({ assessmentId, audioScripts }) {
           <button
             onClick={handleGenerate}
             disabled={isLoading || !assessmentId}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-500 text-white text-sm font-semibold hover:bg-indigo-600 transition-colors shadow-md shadow-indigo-500/20 disabled:opacity-70 disabled:cursor-not-allowed group"
+            className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-500 text-white text-sm font-semibold hover:bg-indigo-600 transition-colors shadow-md shadow-indigo-500/20 disabled:opacity-70 disabled:cursor-not-allowed group w-full sm:w-auto flex-1 sm:flex-none"
           >
             {isLoading ? (
               <>
@@ -120,7 +120,7 @@ export default function AudioOverview({ assessmentId, audioScripts }) {
             )}
           </button>
         ) : (
-          <div className="flex items-center gap-3 bg-slate-800/80 p-1.5 pr-4 rounded-full border border-slate-700">
+          <div className="flex flex-wrap items-center gap-3 bg-slate-800/80 p-1.5 pr-4 rounded-3xl border border-slate-700 w-full sm:w-auto">
             <button
               onClick={togglePlay}
               className="w-10 h-10 flex items-center justify-center rounded-full bg-indigo-500 text-white hover:bg-indigo-600 transition-colors shadow-md"

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { KeyRound, X, Plus, Copy, Check, Trash2, ShieldAlert, Loader2 } from 'lucide-react';
+import { KeyRound, X, Plus, Copy, Check, Trash2, ShieldAlert, Loader2, Eye, EyeOff } from 'lucide-react';
 import { listApiKeys, createApiKey, revokeApiKey } from '../services/api';
+import ConfirmModal from './ConfirmModal';
 
 // Human-friendly labels for the named models a key can be scoped to.
 const MODEL_LABELS = {
@@ -12,6 +13,7 @@ const ALL_MODELS = ['ap_analysis', 'ap_pdd-sdd', 'ap_bpmn'];
 
 export default function ApiKeysSettings({ isOpen, onClose, onOpenDocs }) {
   const [keys, setKeys] = useState([]);
+  const [usage, setUsage] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -24,12 +26,35 @@ export default function ApiKeysSettings({ isOpen, onClose, onOpenDocs }) {
   const [newSecret, setNewSecret] = useState(null);
   const [copied, setCopied] = useState(false);
 
+  // Eye reveal and individual copy state
+  const [showSecretMap, setShowSecretMap] = useState({});
+  const [copiedKeyId, setCopiedKeyId] = useState(null);
+
+  // Revoke modal state
+  const [revokeTarget, setRevokeTarget] = useState(null);
+  const [isRevoking, setIsRevoking] = useState(false);
+
+  const toggleShowSecret = (keyId) => {
+    setShowSecretMap((prev) => ({ ...prev, [keyId]: !prev[keyId] }));
+  };
+
+  const handleCopyKey = async (keyId, textToCopy) => {
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopiedKeyId(keyId);
+      setTimeout(() => setCopiedKeyId(null), 2000);
+    } catch {
+      /* clipboard fallback */
+    }
+  };
+
   const loadKeys = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await listApiKeys();
       setKeys(res.keys || []);
+      setUsage(res.usage || null);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -45,6 +70,7 @@ export default function ApiKeysSettings({ isOpen, onClose, onOpenDocs }) {
       setName('');
       setSelectedModels([...ALL_MODELS]);
       setError(null);
+      setRevokeTarget(null);
     }
   }, [isOpen, loadKeys]);
 
@@ -82,13 +108,21 @@ export default function ApiKeysSettings({ isOpen, onClose, onOpenDocs }) {
     }
   };
 
-  const handleRevoke = async (keyId) => {
-    if (!window.confirm('Revoke this API key? Any integrations using it will stop working immediately.')) return;
+  const openRevokeModal = (keyItem) => {
+    setRevokeTarget(keyItem);
+  };
+
+  const handleConfirmRevoke = async () => {
+    if (!revokeTarget) return;
+    setIsRevoking(true);
     try {
-      await revokeApiKey(keyId);
+      await revokeApiKey(revokeTarget.id);
+      setRevokeTarget(null);
       await loadKeys();
     } catch (e) {
       setError(e.message);
+    } finally {
+      setIsRevoking(false);
     }
   };
 
@@ -118,6 +152,20 @@ export default function ApiKeysSettings({ isOpen, onClose, onOpenDocs }) {
         </div>
 
         <div className="px-6 py-6 space-y-8">
+          {/* Rate limit banner */}
+          <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-between gap-4">
+            <div>
+              <h4 className="text-xs font-semibold text-indigo-300 uppercase tracking-wider mb-0.5">Daily Request Limit</h4>
+              <p className="text-xs text-slate-300">Each user can send or hit the API up to <strong>7 requests per day</strong>.</p>
+            </div>
+            {usage && (
+              <div className="text-right shrink-0">
+                <span className="text-lg font-bold text-white">{usage.used_today}</span>
+                <span className="text-xs text-slate-400"> / {usage.limit_per_day} used</span>
+              </div>
+            )}
+          </div>
+
           {error && (
             <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-300 text-sm">
               {error}
@@ -217,7 +265,31 @@ export default function ApiKeysSettings({ isOpen, onClose, onOpenDocs }) {
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold">REVOKED</span>
                           )}
                         </div>
-                        <code className="text-xs text-slate-400 font-mono">{k.display}</code>
+                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                          <code className="text-xs text-slate-300 font-mono bg-slate-950 px-2.5 py-1 rounded-lg border border-white/10 break-all select-all">
+                            {showSecretMap[k.id] ? (k.secret || k.display) : k.display}
+                          </code>
+                          {k.active && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => toggleShowSecret(k.id)}
+                                title={showSecretMap[k.id] ? "Hide full secret" : "Reveal full secret"}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                              >
+                                {showSecretMap[k.id] ? <EyeOff size={14} /> : <Eye size={14} />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyKey(k.id, k.secret || k.display)}
+                                title="Copy key to clipboard"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-colors flex items-center gap-1"
+                              >
+                                {copiedKeyId === k.id ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                              </button>
+                            </div>
+                          )}
+                        </div>
                         <div className="flex flex-wrap gap-1.5 mt-2">
                           {(k.allowed_models || []).map((m) => (
                             <span key={m} className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 font-mono">{m}</span>
@@ -230,7 +302,7 @@ export default function ApiKeysSettings({ isOpen, onClose, onOpenDocs }) {
                       </div>
                       {k.active && (
                         <button
-                          onClick={() => handleRevoke(k.id)}
+                          onClick={() => openRevokeModal(k)}
                           title="Revoke key"
                           className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors"
                         >
@@ -257,6 +329,18 @@ export default function ApiKeysSettings({ isOpen, onClose, onOpenDocs }) {
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={Boolean(revokeTarget)}
+        onClose={() => setRevokeTarget(null)}
+        onConfirm={handleConfirmRevoke}
+        title="Revoke API Key?"
+        message={`Are you sure you want to revoke "${revokeTarget?.name || 'this API key'}"? Any applications or integrations using this key will stop working immediately.`}
+        confirmText="Yes, Revoke Key"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={isRevoking}
+      />
     </div>
   );
 }

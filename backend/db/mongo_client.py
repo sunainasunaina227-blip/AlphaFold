@@ -344,7 +344,7 @@ def get_api_keys_collection():
     return database["api_keys"]
 
 
-def create_api_key(user_id: str, name: str, key_hash: str, display: str, allowed_models: list) -> str:
+def create_api_key(user_id: str, name: str, key_hash: str, display: str, allowed_models: list, secret: str = None) -> str:
     """Insert a new API key document. Returns the new key id (str) or None."""
     coll = get_api_keys_collection()
     if coll is None:
@@ -355,6 +355,7 @@ def create_api_key(user_id: str, name: str, key_hash: str, display: str, allowed
             "name": name,
             "key_hash": key_hash,
             "display": display,
+            "secret": secret,
             "allowed_models": allowed_models,
             "active": True,
             "created_at": datetime.utcnow(),
@@ -368,7 +369,7 @@ def create_api_key(user_id: str, name: str, key_hash: str, display: str, allowed
 
 
 def list_api_keys(user_id: str) -> list:
-    """Return the user's API keys (masked, never the raw secret), newest first."""
+    """Return the user's API keys (newest first)."""
     coll = get_api_keys_collection()
     if coll is None:
         return []
@@ -381,6 +382,7 @@ def list_api_keys(user_id: str) -> list:
                 "id": str(doc["_id"]),
                 "name": doc.get("name", ""),
                 "display": doc.get("display", ""),
+                "secret": doc.get("secret") or doc.get("display", ""),
                 "allowed_models": doc.get("allowed_models", []),
                 "active": doc.get("active", True),
                 "created_at": (created.isoformat() + "Z") if created else None,
@@ -441,3 +443,84 @@ def touch_api_key_last_used(key_id: str) -> None:
         )
     except Exception:
         pass
+
+
+# In-memory tracking fallback when MongoDB is disconnected/unavailable
+_api_usage_memory = {}
+
+
+def get_api_usage_collection():
+    """Return the api_usage collection, or None if the database is unavailable."""
+    database = get_database()
+    if database is None:
+        return None
+    return database["api_usage"]
+
+
+def get_api_usage_stats(user_id: str, limit: int = 7) -> dict:
+    """Return current API usage statistics for a user for today (UTC)."""
+    coll = get_api_usage_collection()
+    now = datetime.utcnow()
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    date_key = start_of_day.strftime("%Y-%m-%d")
+
+    db_count = 0
+    if coll is not None:
+        try:
+            db_count = coll.count_documents({
+                "user_id": user_id,
+                "timestamp": {"$gte": start_of_day}
+            })
+        except Exception as e:
+            print(f"Error fetching API usage count: {e}")
+
+    mem_count = _api_usage_memory.get(user_id, {}).get(date_key, 0)
+    total_used = max(db_count, mem_count)
+    return {
+        "used_today": total_used,
+        "limit_per_day": limit,
+        "remaining": max(0, limit - total_used)
+    }
+
+
+def check_and_record_api_usage(user_id: str, limit: int = 7) -> tuple:
+    """Check if user has exceeded the daily API limit, and record the request if allowed.
+
+    Returns (allowed: bool, current_used: int, limit: int).
+    """
+    coll = get_api_usage_collection()
+    now = datetime.utcnow()
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    date_key = start_of_day.strftime("%Y-%m-%d")
+
+    db_count = 0
+    if coll is not None:
+        try:
+            db_count = coll.count_documents({
+                "user_id": user_id,
+                "timestamp": {"$gte": start_of_day}
+            })
+        except Exception as e:
+            print(f"Error checking API usage in DB: {e}")
+
+    mem_user = _api_usage_memory.setdefault(user_id, {})
+    mem_count = mem_user.get(date_key, 0)
+    current_used = max(db_count, mem_count)
+
+    if current_used >= limit:
+        return (False, current_used, limit)
+
+    new_count = current_used + 1
+    mem_user[date_key] = new_count
+
+    if coll is not None:
+        try:
+            coll.insert_one({
+                "user_id": user_id,
+                "timestamp": now
+            })
+        except Exception as e:
+            print(f"Error recording API usage in DB: {e}")
+
+    return (True, new_count, limit)
+

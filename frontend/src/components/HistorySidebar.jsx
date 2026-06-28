@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { History, X, Clock, ChevronRight, Loader2, AlertCircle, Trash2 } from 'lucide-react';
 import { getAssessments, getAssessment, deleteAssessment } from '../services/api';
+import ConfirmModal from './ConfirmModal';
 
 export default function HistorySidebar({ isOpen, onClose, onLoadAssessment }) {
   const [assessments, setAssessments] = useState([]);
@@ -8,6 +9,9 @@ export default function HistorySidebar({ isOpen, onClose, onLoadAssessment }) {
   const [error, setError] = useState(null);
   const [loadingId, setLoadingId] = useState(null);
   const [isDeletingId, setIsDeletingId] = useState(null);
+
+  // Modal confirm state
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -42,15 +46,20 @@ export default function HistorySidebar({ isOpen, onClose, onLoadAssessment }) {
     }
   };
 
-  const handleDelete = async (e, id) => {
+  const openDeleteModal = (e, item) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this assessment?")) return;
-    
+    setDeleteTarget(item);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    const id = deleteTarget.id;
     setIsDeletingId(id);
     try {
       await deleteAssessment(id);
       setAssessments(assessments.filter(a => a.id !== id));
       if (loadingId === id) setLoadingId(null);
+      setDeleteTarget(null);
     } catch (err) {
       setError(err.message || 'Failed to delete assessment');
     } finally {
@@ -140,9 +149,10 @@ export default function HistorySidebar({ isOpen, onClose, onLoadAssessment }) {
                   ) : (
                     <div className="flex items-center gap-2">
                       <button 
-                        onClick={(e) => handleDelete(e, item.id)}
+                        onClick={(e) => openDeleteModal(e, item)}
                         disabled={isDeletingId === item.id}
                         className="text-slate-500 hover:text-red-400 transition-colors p-1"
+                        title="Delete assessment"
                       >
                         {isDeletingId === item.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                       </button>
@@ -171,6 +181,18 @@ export default function HistorySidebar({ isOpen, onClose, onLoadAssessment }) {
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+        title="Delete Assessment?"
+        message={`Are you sure you want to delete "${deleteTarget?.title || 'this assessment'}"? All analysis data and reports for this process will be permanently removed.`}
+        confirmText="Yes, Delete"
+        cancelText="Cancel"
+        variant="danger"
+        isLoading={Boolean(isDeletingId)}
+      />
     </>
   );
 }

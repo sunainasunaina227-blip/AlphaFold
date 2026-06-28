@@ -144,12 +144,18 @@ export default function ApiDocs({ isOpen, onClose }) {
               store it somewhere safe.
             </p>
             <CodeBlock label="Required header" code={`Authorization: Bearer ap_sk_your_secret_key_here`} />
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 font-sans">
               <AlertCircle size={16} className="text-amber-300 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-200">
                 The <code>Bearer</code> prefix (with a trailing space) is required. Sending only the raw key
                 returns <code>401 Missing API key</code>. In Postman you can use the Authorization tab → type
                 <strong> Bearer Token</strong> and it adds the prefix for you.
+              </p>
+            </div>
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 mt-3">
+              <ShieldCheck size={16} className="text-indigo-300 shrink-0 mt-0.5" />
+              <p className="text-xs text-indigo-200">
+                <strong>Rate Limit:</strong> Each user can send or hit the API up to <strong>7 requests per day</strong> across all generated keys.
               </p>
             </div>
           </Section>
@@ -295,6 +301,7 @@ export default function ApiDocs({ isOpen, onClose }) {
                   <tr><td className="px-3 py-2 font-mono text-amber-300">400</td><td className="px-3 py-2">Bad input — unknown model, missing/short text, or malformed body.</td></tr>
                   <tr><td className="px-3 py-2 font-mono text-rose-300">401</td><td className="px-3 py-2">Missing, malformed, invalid, or revoked API key.</td></tr>
                   <tr><td className="px-3 py-2 font-mono text-rose-300">403</td><td className="px-3 py-2">Key is valid but not allowed to use the requested model.</td></tr>
+                  <tr><td className="px-3 py-2 font-mono text-rose-300">429</td><td className="px-3 py-2">Rate limit exceeded — maximum 7 requests per day per user.</td></tr>
                   <tr><td className="px-3 py-2 font-mono text-amber-300">413</td><td className="px-3 py-2">Uploaded file exceeds the size limit (100&nbsp;MB).</td></tr>
                   <tr><td className="px-3 py-2 font-mono text-amber-300">415</td><td className="px-3 py-2">Unsupported file type.</td></tr>
                   <tr><td className="px-3 py-2 font-mono text-rose-300">500</td><td className="px-3 py-2">Server error during model execution.</td></tr>

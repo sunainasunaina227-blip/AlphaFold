@@ -208,7 +208,7 @@ export default function FlowchartView({ scoredSteps, initialXml, assessmentId, o
   return (
     <div className="flex flex-col h-[750px] bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-lg relative" style={{ animation: 'fade-in-up 0.5s ease-out 0.2s both' }}>
       {/* Header Bar */}
-      <div className="h-16 border-b border-slate-200 bg-slate-50 flex items-center justify-between px-6 z-10 shrink-0">
+      <div className="min-h-[4rem] border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between px-4 sm:px-6 py-4 sm:py-0 gap-4 z-10 shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
             <Workflow size={16} className="text-indigo-600" />
@@ -216,7 +216,7 @@ export default function FlowchartView({ scoredSteps, initialXml, assessmentId, o
           <h3 className="text-base font-bold text-slate-800">BPMN Process Diagram</h3>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap justify-center items-center gap-2 sm:gap-3">
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -269,7 +269,7 @@ export default function FlowchartView({ scoredSteps, initialXml, assessmentId, o
       {/* AI Prompt Bar */}
       {xmlData && (
         <div className="border-b border-slate-200 bg-slate-50 p-4 shrink-0 z-10">
-          <form onSubmit={handleModifyDiagram} className="max-w-4xl mx-auto flex gap-3">
+          <form onSubmit={handleModifyDiagram} className="max-w-4xl mx-auto flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Sparkles size={16} className="text-indigo-400" />
