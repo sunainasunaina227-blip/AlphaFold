@@ -64,6 +64,28 @@ def call_gemini_structured(
     return json.loads(response.text)
 
 
+def call_gemini_grounded(prompt: str, system_prompt: str = "", model: str = None) -> str:
+    """Text generation grounded with real-time Google Search results.
+
+    Used ONLY to fetch up-to-date pricing inputs (tool/license costs, regional
+    developer rates). Grounding is enabled via the google_search tool. Returns
+    the model's raw text; callers parse JSON leniently and fall back on error.
+    """
+    model = model or GEMINI_MODEL
+    config = {
+        "temperature": 0.0,
+        "tools": [types.Tool(google_search=types.GoogleSearch())],
+    }
+    if system_prompt:
+        config["system_instruction"] = system_prompt
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(**config),
+    )
+    return response.text
+
+
 def call_gemini_multimodal(file_path: str, prompt: str, model: str = None) -> str:
     """Upload a media file (audio/video) to Gemini and get a text response."""
     model = model or GEMINI_MODEL

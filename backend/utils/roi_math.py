@@ -9,6 +9,7 @@ ROI. This is what makes the projections reproducible and defensible.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 
@@ -17,9 +18,44 @@ CURRENCY_SYMBOLS = {
     "USD": "$", "GBP": "\u00a3", "EUR": "\u20ac", "INR": "\u20b9", "AUD": "A$",
     "CAD": "C$", "JPY": "\u00a5", "CNY": "\u00a5", "SGD": "S$", "CHF": "CHF ",
     "AED": "AED ", "ZAR": "R", "NZD": "NZ$", "HKD": "HK$",
+    "BRL": "R$", "KRW": "₩", "MXN": "Mex$", "THB": "฿", "IDR": "Rp",
+    "PHP": "₱", "MYR": "RM", "SAR": "SAR ", "NOK": "kr ", "SEK": "kr ",
 }
 
-_SYMBOL_TO_CODE = {"$": "USD", "\u00a3": "GBP", "\u20ac": "EUR", "\u20b9": "INR", "\u00a5": "JPY"}
+_SYMBOL_TO_CODE = {
+    "$": "USD", "£": "GBP", "€": "EUR", "₹": "INR", "¥": "JPY",
+    "A$": "AUD", "C$": "CAD", "S$": "SGD", "NZ$": "NZD", "HK$": "HKD", "Mex$": "MXN",
+    "R$": "BRL", "₩": "KRW", "฿": "THB", "₱": "PHP", "Rp": "IDR", "RM": "MYR",
+}
+
+# Spelled-out / spoken currency names -> ISO code. Substring-matched in order,
+# so multi-word names ("australian dollar") win before the generic "dollar".
+_NAME_TO_CODE = [
+    (("pound", "sterling", "gbp"), "GBP"),
+    (("euro", "eur"), "EUR"),
+    (("rupee", "inr"), "INR"),
+    (("australian dollar", "aussie", "aud"), "AUD"),
+    (("canadian dollar", "cad"), "CAD"),
+    (("singapore dollar", "sgd"), "SGD"),
+    (("new zealand dollar", "kiwi", "nzd"), "NZD"),
+    (("hong kong dollar", "hkd"), "HKD"),
+    (("yen", "jpy"), "JPY"),
+    (("yuan", "renminbi", "rmb", "cny"), "CNY"),
+    (("dirham", "aed"), "AED"),
+    (("rand", "zar"), "ZAR"),
+    (("swiss franc", "franc", "chf"), "CHF"),
+    (("won", "krw"), "KRW"),
+    (("real", "reais", "brl"), "BRL"),
+    (("mexican peso", "mxn"), "MXN"),
+    (("philippine peso", "php"), "PHP"),
+    (("baht", "thb"), "THB"),
+    (("rupiah", "idr"), "IDR"),
+    (("ringgit", "myr"), "MYR"),
+    (("riyal", "sar"), "SAR"),
+    (("krona", "kronor", "sek"), "SEK"),
+    (("krone", "kroner", "nok"), "NOK"),
+    (("dollar", "usd"), "USD"),
+]
 
 
 def normalize_currency_code(value: Optional[str]) -> str:
@@ -31,16 +67,13 @@ def normalize_currency_code(value: Optional[str]) -> str:
         return v.upper()
     if v in _SYMBOL_TO_CODE:
         return _SYMBOL_TO_CODE[v]
-    # e.g. "pounds", "dollars", "euros", "rupees"
     low = v.lower()
-    if "pound" in low or "gbp" in low or "sterling" in low:
-        return "GBP"
-    if "euro" in low or "eur" in low:
-        return "EUR"
-    if "rupee" in low or "inr" in low:
+    if low in ("rs", "rs.", "₹"):
         return "INR"
-    if "dollar" in low or "usd" in low:
-        return "USD"
+    # Spelled-out names, specific-first so "australian dollar" beats "dollar".
+    for names, code in _NAME_TO_CODE:
+        if any(n in low for n in names):
+            return code
     return v.upper()[:3] if len(v) >= 3 else "USD"
 
 
@@ -59,6 +92,8 @@ FX_TO_USD = {
     "USD": 1.0, "EUR": 1.08, "GBP": 1.27, "INR": 0.012, "AUD": 0.66,
     "CAD": 0.74, "JPY": 0.0064, "CNY": 0.14, "SGD": 0.74, "CHF": 1.12,
     "AED": 0.27, "ZAR": 0.054, "NZD": 0.61, "HKD": 0.128,
+    "BRL": 0.18, "KRW": 0.00073, "MXN": 0.058, "THB": 0.029, "IDR": 0.000063,
+    "PHP": 0.018, "MYR": 0.22, "SAR": 0.27, "NOK": 0.094, "SEK": 0.096,
 }
 
 
@@ -151,12 +186,71 @@ def _f(value, default=None):
         return default
 
 
-def compute_costs(components: list, num_bots: int = 1):
+def _norm_step_key(value):
+    """Normalize a step_number so opportunities reliably match their step.
+
+    Opportunities come from a separate LLM call and may emit step_number as an
+    int (3), a string ("3") or text ("Step 3"); steps always use an int. Both
+    sides are coerced to the same key so the link can never silently break and
+    zero out every effort reduction (the cause of the "linear" 0%% ROI bug).
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    text = str(value).strip()
+    if not text:
+        return None
+    m = re.search(r"\d+", text)
+    return int(m.group()) if m else text.lower()
+
+
+def _norm_name(value):
+    """Normalize a step name for fallback matching."""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return text or None
+
+
+def compute_costs(components: list, num_bots: int = 1, currency: str = "USD",
+                  unit_costs: Optional[dict] = None, bot_license_annual=None,
+                  annual_volume: Optional[int] = None):
     """Deterministically sum implementation + annual cost from detected components.
 
     The LLM only decides WHICH components are present (and how many); the unit
     costs and arithmetic live here so the total is reproducible.
+
+    The COMPONENT_COSTS / bot-licence benchmarks are expressed in USD. They
+    are converted into the project ``currency`` so the cost side is
+    denominated in the SAME currency as the labour-savings side (which uses
+    the stated rate). Without this a non-USD project (e.g. INR) compares
+    rupee savings against dollar-sized costs and reports a wildly
+    overstated ROI / payback.
     """
+    currency = normalize_currency_code(currency)
+
+    def _to_ccy(usd_amount):
+        converted, _ = convert_amount(usd_amount, "USD", currency)
+        return converted
+
+    # Currency-native overrides (already in `currency`) are used verbatim,
+    # with NO FX conversion. Missing components fall back to the static USD
+    # benchmark converted at the reference rate.
+    unit_costs = unit_costs or {}
+
+    def _unit_for(key, spec):
+        if key in unit_costs:
+            u = unit_costs[key] or {}
+            return (_f(u.get("one_time"), 0.0) or 0.0,
+                    _f(u.get("annual"), 0.0) or 0.0)
+        if key == "ocr_idp" and annual_volume:
+            # Scale fallback annual run cost dynamically based on volume: $0.10 USD per document
+            return _to_ccy(spec["one_time"]), _to_ccy(0.10 * annual_volume)
+        return _to_ccy(spec["one_time"]), _to_ccy(spec["annual"])
+
     breakdown = []
     one_time_total = 0.0
     annual_total = 0.0
@@ -167,8 +261,9 @@ def compute_costs(components: list, num_bots: int = 1):
         if not spec:
             continue
         count = max(1, int(_f(comp.get("count", 1), 1)))
-        ot = spec["one_time"] * count
-        an = spec["annual"] * count
+        unit_ot, unit_an = _unit_for(key, spec)
+        ot = round(unit_ot * count, 2)
+        an = round(unit_an * count, 2)
         label = spec["label"] + (f" \u00d7{count}" if count > 1 else "")
         rationale = comp.get("rationale", "")
         if ot:
@@ -190,7 +285,11 @@ def compute_costs(components: list, num_bots: int = 1):
 
     # Bot licensing (annual)
     bots = max(1, int(_f(num_bots, 1)))
-    bot_cost = float(BOT_LICENSE_ANNUAL * bots)
+    if bot_license_annual is not None:
+        bot_unit = _f(bot_license_annual, 0.0) or 0.0
+    else:
+        bot_unit = _to_ccy(BOT_LICENSE_ANNUAL)
+    bot_cost = round(bot_unit * bots, 2)
     annual_total += bot_cost
     breakdown.append({"category": f"Bot Licensing ({bots} bot{'s' if bots > 1 else ''})",
                       "cost": bot_cost, "cost_type": "Annual",
@@ -226,14 +325,25 @@ def _per_txn_minutes(step: dict, throughput_per_day: Optional[float]) -> float:
     return eff
 
 
-def effective_minutes(steps: list, reductions: dict, throughput_per_day: Optional[float] = None):
-    """Return (before, after) effective minutes per transaction."""
+def effective_minutes(steps: list, reductions: dict, throughput_per_day: Optional[float] = None,
+                      reductions_by_name: Optional[dict] = None):
+    """Return (before, after) effective minutes per transaction.
+
+    The per-step reduction is matched first by a normalized step_number key
+    and then by step name, so an int/string mismatch (or a missing
+    step_number) in the opportunity mapping can never silently zero out the
+    reductions.
+    """
+    reductions_by_name = reductions_by_name or {}
     before = 0.0
     after = 0.0
     for s in steps or []:
         eff = _per_txn_minutes(s, throughput_per_day)
         before += eff
-        red = reductions.get(s.get("step_number"), 0) or 0
+        red = reductions.get(_norm_step_key(s.get("step_number")))
+        if red is None:
+            red = reductions_by_name.get(_norm_name(s.get("name") or s.get("step_name")), 0)
+        red = red or 0
         after += eff * (1 - (red / 100.0))
     return round(before, 2), round(after, 2)
 
@@ -251,7 +361,8 @@ def detect_missing_critical_facts(discovery_facts: dict) -> list:
 
 def compute_roi(scored_steps, opportunities, discovery_facts,
                 implementation_cost, annual_maintenance_cost,
-                cost_breakdown=None, fallback_hourly_rate=None):
+                cost_breakdown=None, fallback_hourly_rate=None,
+                pricing_source: Optional[str] = None):
     """Compute the full, grounded, deterministic ROI projection."""
     df = discovery_facts or {}
     assumptions = []
@@ -273,15 +384,19 @@ def compute_roi(scored_steps, opportunities, discovery_facts,
 
     # Effort reductions per step from the opportunity mapping
     reductions = {}
+    reductions_by_name = {}
     capped_any = False
     for o in opportunities or []:
-        sn = o.get("step_number")
-        if sn is not None:
-            red = _f(o.get("effort_reduction_pct"), 0) or 0
-            if red > MAX_STEP_EFFORT_REDUCTION_PCT:
-                red = MAX_STEP_EFFORT_REDUCTION_PCT
-                capped_any = True
-            reductions[sn] = red
+        red = _f(o.get("effort_reduction_pct"), 0) or 0
+        if red > MAX_STEP_EFFORT_REDUCTION_PCT:
+            red = MAX_STEP_EFFORT_REDUCTION_PCT
+            capped_any = True
+        key = _norm_step_key(o.get("step_number"))
+        if key is not None:
+            reductions[key] = red
+        name_key = _norm_name(o.get("step_name") or o.get("name"))
+        if name_key:
+            reductions_by_name[name_key] = red
     if capped_any:
         assumptions.append(
             f"Per-step effort reductions were capped at {int(MAX_STEP_EFFORT_REDUCTION_PCT)}% \u2014 even fully "
@@ -302,7 +417,7 @@ def compute_roi(scored_steps, opportunities, discovery_facts,
             warnings.append("No processing volume stated \u2014 assumed 100/week. Volume strongly drives ROI; provide the real figure.")
     weekly_volume = int(round(annual_volume / 52))
 
-    before_min, after_min = effective_minutes(scored_steps, reductions, throughput)
+    before_min, after_min = effective_minutes(scored_steps, reductions, throughput, reductions_by_name)
 
     # ── Calibration to grounded team capacity (biggest accuracy driver) ──
     # Per-step minutes are AI estimates and tend to be inflated. The grounded
@@ -427,6 +542,20 @@ def compute_roi(scored_steps, opportunities, discovery_facts,
     # Financials
     implementation_cost = round(_f(implementation_cost, 0) or 0, 2)
     annual_maintenance_cost = round(_f(annual_maintenance_cost, 0) or 0, 2)
+    if currency != "USD" and (implementation_cost or annual_maintenance_cost):
+        region = df.get("region") or df.get("country")
+        if pricing_source in ("live", "cache"):
+            assumptions.append(
+                f"Implementation & maintenance costs are based on live regional pricing for {currency} "
+                f"in the {region or 'local'} region (and cached where applicable)."
+            )
+        else:
+            assumptions.append(
+                "Implementation & maintenance benchmarks are USD-based industry "
+                f"midpoints, converted to {currency} at approximate reference FX "
+                "rates (not live rates). Provide a real local build quote to remove "
+                "this assumption."
+            )
     total_annual_benefits = round(annual_labor_savings + other_benefits, 2)
     net_annual_savings = round(total_annual_benefits - annual_maintenance_cost, 2)
 

@@ -4,6 +4,7 @@ from graph.state import APProcessState
 from graph.models import ComponentDetection
 from utils.gemini_client import call_gemini_structured
 from utils import roi_math
+from utils import pricing
 
 
 COMPONENT_SYSTEM_PROMPT = """You are an RPA Solution Architect. Your ONLY job is to CLASSIFY which technical
@@ -70,8 +71,36 @@ Return the components list (with counts + rationale) and num_bots. Do NOT estima
         ]
 
     # ---- Step 2: deterministic cost model -----------------------------------
+    # Prices are resolved in the PROJECT's own currency. With live pricing on,
+    # real local prices are fetched (and cached) via Google-Search grounding;
+    # otherwise we fall back to the static benchmark converted at reference FX.
+    # Either way the cost side ends up in the same currency as the savings side.
+    project_currency = roi_math.normalize_currency_code(discovery_facts.get("currency"))
+    region = discovery_facts.get("region") or discovery_facts.get("country")
+    
+    # Resolve annual volume first to size bots and scale pricing:
+    throughput = roi_math._f(discovery_facts.get("throughput_per_person_per_day"))
+    stated_fte = roi_math._f(discovery_facts.get("fte_total"))
+    annual_volume = discovery_facts.get("annual_volume")
+    annual_volume = int(annual_volume) if annual_volume else 0
+    if not annual_volume:
+        if throughput and stated_fte:
+            annual_volume = int(round(throughput * stated_fte * roi_math.WORKING_DAYS_PER_YEAR))
+        else:
+            annual_volume = 100 * 52
+
+    # Cap num_bots at 1 if annual volume <= 50,000 (sized to volume)
+    if annual_volume <= 50000:
+        num_bots = 1
+
+    pricing_info = pricing.resolve_unit_costs(
+        components, project_currency, region, num_bots=num_bots, annual_volume=annual_volume
+    )
     implementation_cost, annual_maintenance_cost, cost_breakdown = roi_math.compute_costs(
-        components, num_bots
+        components, num_bots, currency=project_currency,
+        unit_costs=pricing_info.get("unit_costs"),
+        bot_license_annual=pricing_info.get("bot_license_annual"),
+        annual_volume=annual_volume,
     )
 
     # ---- Step 3: deterministic, grounded ROI/FTE ----------------------------
@@ -83,9 +112,22 @@ Return the components list (with counts + rationale) and num_bots. Do NOT estima
         annual_maintenance_cost=annual_maintenance_cost,
         cost_breakdown=cost_breakdown,
         fallback_hourly_rate=fallback_rate,
+        pricing_source=pricing_info.get("source"),
     )
     roi_estimate["rpa_platform_detected"] = (detection or {}).get("rpa_platform_detected")
     roi_estimate["num_bots"] = num_bots
     roi_estimate["detected_components"] = components
+    roi_estimate["pricing_source"] = pricing_info.get("source")
+    roi_estimate["pricing_region"] = pricing_info.get("region")
+    # Safety: in fallback mode a currency with no reference FX rate cannot be
+    # converted, so costs would remain USD-sized. Surface that clearly.
+    if (pricing_info.get("source") == "fallback"
+            and project_currency != "USD"
+            and project_currency not in roi_math.FX_TO_USD):
+        roi_estimate.setdefault("warnings", []).append(
+            f"No reference exchange rate is available for {project_currency}, so costs "
+            f"are shown as USD-equivalent benchmarks without conversion. Enable live "
+            f"pricing or provide a local build quote for an accurate {project_currency} figure."
+        )
 
     return {"roi_estimate": roi_estimate}

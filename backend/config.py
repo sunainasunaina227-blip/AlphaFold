@@ -32,3 +32,11 @@ ALL_SUPPORTED_EXTENSIONS = (
     | SUPPORTED_DOC_EXTENSIONS
     | SUPPORTED_TEXT_EXTENSIONS
 )
+
+# --- Live pricing (Google Search grounded) ---
+# When true, component costs are fetched in the project's own currency via
+# Gemini + Google Search grounding (cached). When false (default), the static
+# benchmark table converted at reference FX is used (fully deterministic).
+ENABLE_LIVE_PRICING = os.getenv("ENABLE_LIVE_PRICING", "false").strip().lower() in ("1", "true", "yes", "on")
+DEFAULT_PRICING_REGION = os.getenv("DEFAULT_PRICING_REGION", "US")
+PRICING_CACHE_TTL_HOURS = int(os.getenv("PRICING_CACHE_TTL_HOURS", "168"))  # 7 days

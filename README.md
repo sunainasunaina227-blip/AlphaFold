@@ -399,11 +399,38 @@ integrating AP discovery into other systems.
    (`ap_sk_...`) is shown **exactly once**. Only a SHA-256 hash is stored.
 2. **Call `/v1/run`** with the key as a Bearer token.
 
+### Running in the Terminal
+
+You can invoke the named models directly from your terminal using `curl` or `Invoke-RestMethod` (PowerShell).
+
+#### Linux / macOS / Git Bash:
 ```bash
 curl -X POST http://localhost:8000/v1/run \
-  -H "Authorization: Bearer ap_sk_your_secret" \
+  -H "Authorization: Bearer ap_sk_your_secret_key" \
   -H "Content-Type: application/json" \
-  -d '{"model": "ap_analysis", "input": {"text": "Invoices arrive by email..."}}'
+  -d '{
+    "model": "ap_analysis",
+    "input": { "text": "Our AP process starts when an invoice arrives by email..." }
+  }'
+```
+
+#### Windows Command Prompt (`cmd.exe`):
+```cmd
+curl -X POST http://localhost:8000/v1/run -H "Authorization: Bearer ap_sk_your_secret_key" -H "Content-Type: application/json" -d "{\"model\": \"ap_analysis\", \"input\": {\"text\": \"Our AP process starts when an invoice arrives by email...\"}}"
+```
+
+#### Windows PowerShell:
+```powershell
+$headers = @{
+    "Authorization" = "Bearer ap_sk_your_secret_key"
+    "Content-Type"  = "application/json"
+}
+$body = @{
+    model = "ap_analysis"
+    input = @{ text = "Our AP process starts when an invoice arrives by email..." }
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8000/v1/run" -Method Post -Headers $headers -Body $body
 ```
 
 **Models:**

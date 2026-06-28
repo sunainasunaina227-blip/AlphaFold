@@ -363,11 +363,12 @@ function DetailedROIChart({
   const data = useMemo(() => {
     const monthlyManualCost = (costMetrics.rawWeeklyCostBefore * 52) / 12;
     const monthlyAutomatedCost = (costMetrics.rawWeeklyCostAfter * 52) / 12;
+    const monthlyMaintenance = (costMetrics.annualMaintenance || 0) / 12;
 
     const chartData = [];
     for (let m = 0; m <= horizonMonths; m++) {
       const manualCost = Math.round(m * monthlyManualCost);
-      const automatedCost = Math.round(investment + m * monthlyAutomatedCost);
+      const automatedCost = Math.round(investment + m * (monthlyAutomatedCost + monthlyMaintenance));
       const netValue = Math.round(manualCost - automatedCost);
 
       chartData.push({
@@ -575,6 +576,11 @@ export default function AnalyticsCharts({ data, onUpdateHourlyRate }) {
   const [investmentInput, setInvestmentInput] = useState(
     String(defaultInvestment),
   );
+
+  useEffect(() => {
+    setInvestment(defaultInvestment);
+    setInvestmentInput(String(defaultInvestment));
+  }, [defaultInvestment]);
 
   const handleInvestmentSubmit = () => {
     const parsed = parseFloat(investmentInput);
