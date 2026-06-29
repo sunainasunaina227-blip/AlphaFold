@@ -557,11 +557,16 @@ export default function DocumentView({ result, onUpdateResult, pendingDocEdits =
   // restore them on save so the real content is never lost.
   const stashedDiagramsRef = useRef([]);
 
-  /** Replace HTML diagram blocks with MDX-safe placeholders. */
+  /** Replace HTML diagram blocks with MDX-safe placeholders and escape invalid JSX tags. */
   const stripHtmlForEditor = (md) => {
+    if (!md) return md;
     const stash = [];
+
+    // 0. Sanitize SVG diagrams first so they are normalized
+    let cleaned = sanitizeContent(md);
+
     // 1. <figure class="doc-flowchart">…</figure> blocks (SVG diagrams)
-    let cleaned = md.replace(
+    cleaned = cleaned.replace(
       /<figure[^>]*class=["']doc-flowchart["'][^>]*>[\s\S]*?<\/figure>/gi,
       (m) => { const idx = stash.length; stash.push(m); return `\n\n> **[Embedded Diagram ${idx + 1}]** *(preserved — not editable in rich-text mode)*\n\n`; }
     );
@@ -576,6 +581,35 @@ export default function DocumentView({ result, onUpdateResult, pendingDocEdits =
       (m) => { const idx = stash.length; stash.push(m); return ''; }
     );
     stashedDiagramsRef.current = stash;
+
+    // 4. Escape unescaped `<` that break MDX parsing (e.g. `<3`, `<3-way matching>`, `<30%`, or invalid JSX tag names)
+    const validTags = new Set([
+      'a','abbr','address','article','aside','b','bdi','bdo','blockquote','br','caption','cite',
+      'code','col','colgroup','data','dd','del','details','dfn','div','dl','dt','em','figcaption',
+      'figure','footer','header','hgroup','h1','h2','h3','h4','h5','h6','hr','i','img','ins','kbd',
+      'li','main','mark','ol','p','pre','q','rp','rt','ruby','s','samp','section','small','span',
+      'strong','sub','summary','sup','table','tbody','td','tfoot','th','thead','time','tr','u','ul','var','wbr'
+    ]);
+
+    // Tokenize by code blocks (```...```) and inline code (`...`) to preserve code snippets
+    const parts = cleaned.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
+    cleaned = parts.map((part, index) => {
+      if (index % 2 === 1) return part; // Inside code block or inline code span
+
+      // Replace any `<` that does not form a valid standard HTML tag
+      return part.replace(/<([a-zA-Z0-9_-]+)?/g, (match, tagCandidate, offset, fullStr) => {
+        if (tagCandidate) {
+          const lower = tagCandidate.toLowerCase();
+          const remainder = fullStr.slice(offset);
+          const tagRegex = new RegExp(`^<\\/?${tagCandidate}\\b[^>]*\\/?>`, 'i');
+          if (validTags.has(lower) && tagRegex.test(remainder)) {
+            return match; // Keep valid HTML tag
+          }
+        }
+        return '&lt;' + (tagCandidate || '');
+      });
+    }).join('');
+
     return cleaned;
   };
 
@@ -1200,7 +1234,7 @@ export default function DocumentView({ result, onUpdateResult, pendingDocEdits =
             <span className="text-slate-700">→</span>
             <span className="flex items-center gap-1.5 text-slate-600">Generating flowcharts</span>
           </div>
-          <p className="text-xs text-slate-600 mt-3">This usually takes 30–60 seconds</p>
+          <p className="text-xs text-slate-600 mt-3">It will take a moment to generate your report...</p>
         </div>
       )}
 

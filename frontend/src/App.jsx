@@ -323,7 +323,7 @@ function Dashboard({ user }) {
               <p className="text-sm text-slate-400 text-center max-w-sm mb-8">
                 Running 6-node AI pipeline with AlphaFold...
                 <br />
-                <span className="text-xs text-slate-500">This typically takes 30–60 seconds</span>
+                <span className="text-xs text-slate-500">It will take a moment to generate your report...</span>
               </p>
               <div className="flex flex-wrap justify-center gap-2 sm:gap-4 px-4">
                 {['Extract', 'Structure', 'Score', 'Map', 'Summarize'].map((step, i) => (
