@@ -56,3 +56,17 @@ backend/temp/
 backend/scratch/
 backend/db_output.txt
 backend/db_output_latest.txt
+
+# Temporary debug scratch scripts
+backend/test.py
+backend/test2.py
+backend/test3.py
+backend/test_api.py
+backend/test_db.py
+backend/test_gemini_setup.py
+backend/test_models.py
+backend/test_pipeline.py
+backend/test_tts.py
+backend/test_ws.py
+test_resume.py
+test_ws.py
